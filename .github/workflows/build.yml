@@ -20,7 +20,7 @@ jobs:
 
     - name: Build Executable
       # -ldflags="-H windowsgui" 的作用是隐藏运行时的 CMD 黑框，让程序完全在后台静默运行
-      run: go build -ldflags="-H windowsgui" -o GuideListener.exe main.go
+      run: go build -o GuideListener-Debug.exe main.go
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
