@@ -27,43 +27,52 @@ type XINPUT_STATE struct {
 }
 
 const (
-	XINPUT_GAMEPAD_LEFT_THUMB = 0x0040 // L3 键（左摇杆按下）
+	XINPUT_GAMEPAD_LEFT_THUMB = 0x0040 // 标准的 L3 键掩码
 	ERROR_SUCCESS             = 0
 )
 
-var xinputGetEx *syscall.Proc
+var xinputGetState *syscall.Proc
 
-// 智能加载 DLL 的函数保持不变
-func initXInput() error {
-	dllNames := []string{
-		"xinput1_4.dll",
-		"xinput1_3.dll",
-		"xinput1_2.dll",
-		"xinput1_1.dll",
-		"xinput9_1_0.dll",
+// 写日志助手：把运行状态悄悄写进 error_log.txt，方便排错
+func writeLog(msg string) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return
 	}
+	logPath := filepath.Join(filepath.Dir(exePath), "error_log.txt")
+	// 追加模式写入日志，带上时间戳
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err == nil {
+		f.WriteString(time.Now().Format("2006-01-02 15:04:05") + " - " + msg + "\n")
+		f.Close()
+	}
+}
+
+// 智能加载稳定版的官方驱动
+func initXInput() error {
+	dllNames := []string{"xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll"}
 
 	for _, name := range dllNames {
 		dll, err := syscall.LoadDLL(name)
 		if err == nil {
-			proc, err := dll.FindProc("#100")
+			// L3 是标准按键，直接使用官方公开的接口 XInputGetState 即可，100% 稳定
+			proc, err := dll.FindProc("XInputGetState")
 			if err == nil {
-				xinputGetEx = proc
-				fmt.Printf("成功加载手柄驱动: %s\n", name)
+				xinputGetState = proc
+				writeLog("成功加载手柄驱动: " + name)
 				return nil
 			}
 			dll.Release()
 		}
 	}
-	return fmt.Errorf("你的系统缺少所有版本的 Xbox 手柄驱动 (XInput DLL)")
+	return fmt.Errorf("系统缺少手柄驱动 DLL")
 }
 
 func main() {
 	err := initXInput()
 	if err != nil {
-		fmt.Println("启动失败:", err)
-		time.Sleep(10 * time.Second)
-		return
+		writeLog("启动失败: " + err.Error())
+		return // 加载失败才会退出
 	}
 
 	var state XINPUT_STATE
@@ -72,14 +81,14 @@ func main() {
 	isPressing := false
 	hasTriggered := false
 
-	fmt.Println("正在后台监听 L3 键 (左摇杆按下)...")
+	writeLog("程序已成功驻留后台，正在持续监听 L3...")
 
 	for {
-		if xinputGetEx != nil {
-			ret, _, _ := xinputGetEx.Call(0, uintptr(unsafe.Pointer(&state)))
+		if xinputGetState != nil {
+			ret, _, _ := xinputGetState.Call(0, uintptr(unsafe.Pointer(&state)))
 
 			if ret == ERROR_SUCCESS {
-				// 检查 L3 键是否被按下
+				// 手柄已连接且工作正常
 				isL3Pressed := (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB) != 0
 
 				if isL3Pressed {
@@ -89,7 +98,6 @@ func main() {
 						pressStartTime = time.Now()
 					} else if !hasTriggered {
 						if time.Since(pressStartTime) >= 10*time.Second {
-							// 长按达到 10 秒，触发读取文件并执行
 							go launchPs1FromConf()
 							hasTriggered = true
 						}
@@ -98,48 +106,43 @@ func main() {
 					isPressing = false
 					hasTriggered = false
 				}
+			} else {
+				// 如果手柄休眠或被拔掉，重置状态，防止按键状态卡死
+				isPressing = false
+				hasTriggered = false
 			}
 		}
+		// 降低 CPU 占用，50 毫秒轮询一次足够灵敏
 		time.Sleep(50 * time.Millisecond)
 	}
 }
 
-// 动态读取 command.conf 并执行
 func launchPs1FromConf() {
-	// 1. 获取当前 exe 所在的完整路径
 	exePath, err := os.Executable()
 	if err != nil {
-		fmt.Println("无法获取当前程序路径:", err)
+		writeLog("执行失败：无法获取当前 exe 路径")
 		return
 	}
 	
-	// 2. 获取 exe 所在的目录文件夹
-	exeDir := filepath.Dir(exePath)
-	
-	// 3. 拼接 command.conf 的绝对路径
-	confPath := filepath.Join(exeDir, "command.conf")
+	confPath := filepath.Join(filepath.Dir(exePath), "command.conf")
 
-	// 4. 读取文件内容
 	content, err := os.ReadFile(confPath)
 	if err != nil {
-		fmt.Printf("读取 command.conf 失败 (请确认文件存在): %v\n", err)
+		writeLog("触发中止：找不到或无法读取 command.conf 文件")
 		return
 	}
 
-	// 5. 清理文件内容中多余的空格或回车换行符
 	commandStr := strings.TrimSpace(string(content))
 	if commandStr == "" {
-		fmt.Println("command.conf 文件内容为空！")
+		writeLog("触发中止：command.conf 里没有写入任何命令")
 		return
 	}
 
-	// 6. 使用 PowerShell 隐藏执行读取到的命令
-	// 这里使用了 -Command 参数，所以配置文件里可以直接写 .ps1 的路径，也可以直接写 PowerShell 原生指令
 	cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", commandStr)
 	err = cmd.Start()
 	if err != nil {
-		fmt.Printf("执行 PowerShell 失败: %v\n", err)
+		writeLog("执行 PowerShell 失败: " + err.Error())
 	} else {
-		fmt.Println("成功触发命令:", commandStr)
+		writeLog("成功触发！已静默执行命令: " + commandStr)
 	}
 }
