@@ -2,12 +2,12 @@ name: Build Go App
 
 on:
   push:
-    branches: [ "main" ] # 当推送到 main 分支时触发
-  workflow_dispatch:     # 允许你在 GitHub 网页上手动点击运行
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest # 强制在 Windows 环境下编译
+    runs-on: windows-latest
 
     steps:
     - name: Checkout code
@@ -16,14 +16,16 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21' # 指定 Go 版本
+        go-version: '1.21'
+        cache: false # 关闭缓存，消灭 go.sum 警告
 
     - name: Build Executable
-      # -ldflags="-H windowsgui" 的作用是隐藏运行时的 CMD 黑框，让程序完全在后台静默运行
-      run: go build -o GuideListener-Debug.exe main.go
+      # 加上隐藏窗口参数，并且统一输出名字为 GuideListener.exe
+      run: go build -ldflags="-H windowsgui" -o GuideListener.exe main.go
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: GuideListener-Windows
+        # 这里的名字和上面编译生成的名字保持一致
         path: GuideListener.exe
