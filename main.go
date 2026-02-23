@@ -97,7 +97,7 @@ func main() {
 						hasTriggered = false
 						pressStartTime = time.Now()
 					} else if !hasTriggered {
-						if time.Since(pressStartTime) >= 5*time.Second {
+						if time.Since(pressStartTime) >= 6*time.Second {
 							go launchPs1FromConf()
 							hasTriggered = true
 						}
@@ -113,7 +113,7 @@ func main() {
 			}
 		}
 		// 降低 CPU 占用，50 毫秒轮询一次足够灵敏
-		time.Sleep(1000 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
